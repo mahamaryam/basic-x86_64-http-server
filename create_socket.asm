@@ -1,7 +1,7 @@
 section .data
     socket      dq      0
-    port        dw  0x901F   ; Port 8080 in network byte order (htons(8080))
-    ip_addr     dd  0        ; INADDR_ANY (listen on all interfaces)
+    port        dw  0x901F   
+    ip_addr     dd  0        
     starting    db  "Listening on port 8080...", 0ah, 0ah, 0h
     startingLen equ $ - starting
     client      dq  0
@@ -11,13 +11,11 @@ section .data
     fd          dd  0
     fileBuffer  times buffLen db 0
     here db "here"
-    ; HTTP Response (200 OK)
     http_response db "HTTP/1.1 200 OK", 0ah
                   db "Content-Type: text/plain", 0ah
                   db "Connection: close", 0ah, 0ah
     http_response_len equ $ - http_response
     
-    ; HTTP 404 Response
     http_bad_response db "HTTP/1.1 404 Not Found", 0ah
                       db "Content-Length: 17", 0ah
                       db "Connection: close", 0ah, 0ah
@@ -31,137 +29,126 @@ section .text
     global _start
 
 _start:
-    ; Create socket (socket(AF_INET, SOCK_STREAM, 0))
-    mov rdi, 2          ; AF_INET
-    mov rsi, 1          ; SOCK_STREAM (TCP)
-    mov rdx, 0          ; Protocol (0 = default for TCP)
-    mov rax, 41         ; syscall: socket()
+    ;creating socket (socket(AF_INET, SOCK_STREAM, 0))
+    mov rdi, 2          ;af_inet
+    mov rsi, 1          ;tcp
+    mov rdx, 0          ;the protocol
+    mov rax, 41         
     syscall
     mov [socket],rax
     test rax, rax
     js error
-    mov rbx, rax        ; Store socket descriptor
+    mov rbx, rax        ;store socket fd
 
-    ; Prepare sockaddr_in structure
+    ;preparation of the socket strcut
     mov rdi, sockaddr
-    mov word [rdi], 2   ; sin_family = AF_INET
-    mov word [rdi + 2], 0x901F  ; sin_port = htons(8080)
-    mov dword [rdi + 4], 0  ; sin_addr = INADDR_ANY (0.0.0.0)
+    mov word [rdi], 2   ;AF_INET
+    mov word [rdi + 2], 0x901F  
+    mov dword [rdi + 4], 0  
 
-    ; Bind socket (bind(sockfd, sockaddr, sizeof(sockaddr)))
-    mov rdi, [socket]        ; Socket descriptor
-    mov rsi, sockaddr   ; Pointer to sockaddr struct
-    mov     rdx,dword 32            ; Load 32 bit socket address size
-    mov rax, 49         ; syscall: bind()
+    ;binding like...  (bind(sockfd, sockaddr, sizeof(sockaddr)))
+    mov rdi, [socket]        ;socket fd
+    mov rsi, sockaddr   ;ptr to stryct
+    mov     rdx,dword 32          
+    mov rax, 49         
     syscall
     test rax, rax
     js error
 
-    ; Print startup message
     mov rax, 1
     mov rdi, 1
     mov rsi, starting
     mov rdx, startingLen
     syscall
 
-    ; Listen (listen(sockfd, backlog))
-    mov rdi, [socket]        ; Socket descriptor
-    mov rsi, 8         ; Backlog (max queue size)
-    mov rax, 50         ; syscall: listen()
+    ;listen(listen(sockfd, backlog))
+    mov rdi, [socket]      
+    mov rsi, 8         
+    mov rax, 50         
     syscall
     test rax, rax
     js error
 
 acceptRequests:
-    ; Accept a new connection (accept(sockfd, sockaddr, sizeof(sockaddr)))
-    mov rdi, [socket]        ; Server socket descriptor
+    ;accept(sockfd, sockaddr, sizeof(sockaddr))
+    mov rdi, [socket]        
     xor rsi,rsi
     xor rdx,rdx
-    mov rax, 43         ; syscall: accept()
+    mov rax, 43         
     syscall
     cmp rax,0
     jl error
-    mov [client], rax   ; Store client socket descriptor
+    mov [client], rax   
 
-    ; Read request (read(client_sock, reqBuff, buffLen))
-    mov rax, 0          ; syscall: read()
-    mov rdi, [client]   ; Client socket descriptor
-    mov rsi, reqBuff    ; Buffer to store request
-    mov rdx, buffLen    ; Max bytes to read
+    mov rax, 0         
+    mov rdi, [client]  
+    mov rsi, reqBuff   
+    mov rdx, buffLen    
     syscall
     test rax, rax
-    js closeClient      ; If error, close client
+    js closeClient      
     
-    ; Open "index.html"
     mov rdi, file
-    mov rsi, 0          ; Read-only mode
+    mov rsi, 0          
     mov rdx, 0
-    mov rax, 2          ; syscall: open()
+    mov rax, 2          
     syscall
     test rax, rax
-    js fileNotFound     ; If file doesn't exist, return 404
-    mov [fd], rax       ; Store file descriptor
+    js fileNotFound    
+    mov [fd], rax       
 
-    ; Send HTTP response headers first (write(client_sock, http_response, http_response_len))
-    mov rdi, [client]   ; Client socket descriptor
+    mov rdi, [client]   
     mov rsi, http_response
     mov rdx, http_response_len
-    mov rax, 1          ; syscall: write()
+    mov rax, 1          
     syscall
     test rax, rax
-    js closeClient      ; If failed to write headers, close client
+    js closeClient      
 
     mov rdi, 1
     mov rax,1
     syscall
 readAndWrite:
-    ; Read file into buffer
-    mov rax, 0          ; syscall: read()
-    mov rdi, [fd]       ; File descriptor
-    mov rsi, fileBuffer ; Buffer
-    mov rdx, buffLen    ; Max bytes to read
+    mov rax, 0         
+    mov rdi, [fd]       
+    mov rsi, fileBuffer 
+    mov rdx, buffLen    
     syscall
     test rax, rax
-    jle closeFile       ; If EOF (rax == 0), close file
+    jle closeFile       
 
-    ; Write file data to client
-    mov rdi, [client]   ; Client socket descriptor
-    mov rsi, fileBuffer ; Buffer
-    mov rdx, rax        ; Length (bytes read)
-    mov rax, 1          ; syscall: write()
+    mov rdi, [client]   
+    mov rsi, fileBuffer 
+    mov rdx, rax        
+    mov rax, 1         
     syscall
     test rax, rax
-    js closeFile        ; If failed to write file data, close client
+    js closeFile        
 
-    ; Continue reading and writing file
     jmp readAndWrite
 
 closeFile:
-    ; Close file (close(fd))
-    mov rax, 3          ; syscall: close()
-    mov rdi, [fd]       ; File descriptor
+    mov rax, 3          
+    mov rdi, [fd]       
     syscall
 
 closeClient:
-    ; Close client connection (close(client_sock))
-    mov rax, 3          ; syscall: close()
-    mov rdi, [client]   ; Client socket descriptor
+    mov rax, 3          
+    mov rdi, [client]   
     syscall
-
-    jmp acceptRequests  ; Go back to accepting new connections
+    jmp acceptRequests  
 
 fileNotFound:
-    ; Send HTTP 404 Response (File Not Found)
     mov rdi, [client]
     mov rsi, http_bad_response
     mov rdx, bad_res_len
     mov rax, 1
     syscall
 
-    jmp closeClient  ; Close the client after sending 404 response
+    jmp closeClient  
 
 error:
     mov rdi, 1
-    mov rax, 60      ; syscall: exit()
+    mov rax, 60      
     syscall
 
